@@ -37,6 +37,20 @@ async def orm_delete_user(session: AsyncSession, telegram_id: int) -> None:
     await session.execute(query)
     await session.commit()
 
+
+async def orm_get_user_role(session: AsyncSession, telegram_id: int) -> str:
+    """
+    Получает роль пользователя по его telegram_id.
+    Возвращает строку с ролью ('user', 'admin', 'superuser') или 'user' по умолчанию.
+    """
+    query = select(User.role).where(User.telegram_id == telegram_id)
+    result = await session.execute(query)
+    role = result.scalar()
+
+    print(f"🎭 Роль пользователя {telegram_id}: {role}")  # Добавляем отладку
+
+    return role if role else "user"  # Если роли нет, считаем, что это обычный пользователь
+
 # === Работа с категориями ===
 async def orm_get_category_by_name(session: AsyncSession, category_name: str):
     """Возвращает категорию по её названию."""
@@ -106,6 +120,59 @@ async def save_product_image(file, product_id: int, db: AsyncSession) -> str:
     except Exception as e:
         print(f"Ошибка сохранения файла: {e}")
         return None
+
+
+# === Работа с категориями ===
+async def category_has_products(session: AsyncSession, category_id: int) -> bool:
+    """Проверяет, есть ли у категории привязанные товары."""
+    result = await session.execute(
+        select(Product).where(Product.category_id == category_id)
+    )
+    return result.scalars().first() is not None
+
+async def orm_get_all_categories(session: AsyncSession):
+    result = await session.execute(select(Category))
+    return result.scalars().all()
+
+
+async def orm_get_category_by_id(session: AsyncSession, category_id: int):
+    """Проверяет, существует ли категория с указанным ID."""
+    result = await session.execute(select(Category).where(Category.id == category_id))
+    return result.scalar()
+
+
+async def orm_add_category(session: AsyncSession, name: str, description: str = None):
+    category = Category(name=name, description=description)
+    session.add(category)
+    await session.commit()
+    return category
+
+
+async def orm_update_category(session: AsyncSession, category_id: int, name: str, description: str = None):
+    stmt = (
+        update(Category)
+        .where(Category.id == category_id)
+        .values(name=name, description=description)
+    )
+    await session.execute(stmt)
+    await session.commit()
+
+
+async def orm_delete_category(session: AsyncSession, category_id: int):
+    # Проверим, есть ли связанные товары
+    result = await session.execute(select(Product).where(Product.category_id == category_id))
+    linked_products = result.scalars().all()
+
+    if linked_products:
+        return False  # Нельзя удалить, если есть связанные товары
+    # Ищем саму категорию
+    category = await session.get(Category, category_id)
+    if not category:
+        return False
+
+    await session.delete(category)
+    await session.commit()
+    return True
 
 # === Работа с корзиной ===
 async def orm_get_or_create_cart(session: AsyncSession, user: User):

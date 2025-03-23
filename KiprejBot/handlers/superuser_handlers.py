@@ -4,13 +4,29 @@ from database.db import async_session
 from database.orm_requests import orm_get_user_by_telegram
 from sqlalchemy import update
 from database.models import User
-from utils.role_decorator import admin_required
+from utils.role_decorator import admin_required, superuser_required
+from config import ENV_ALLOWED_SUPERUSER_ID
 
 superuser_router = Router()
 
 
+
+@superuser_router.message(Command("set_me_superuser"))
+async def set_me_superuser_handler(message: types.Message):
+    if message.from_user.id != ENV_ALLOWED_SUPERUSER_ID:
+        await message.answer("⛔ У вас нет прав для этой команды.")
+        return
+
+    async with async_session() as session:
+        stmt = update(User).where(User.telegram_id == message.from_user.id).values(role="superuser")
+        await session.execute(stmt)
+        await session.commit()
+
+    await message.answer("✅ Вы назначены суперпользователем.")
+
+
 @superuser_router.message(Command("set_role"))
-@admin_required
+@superuser_required
 async def set_role_handler(message: types.Message):
     """
     Команда для суперпользователя для обновления роли пользователя.
@@ -40,7 +56,7 @@ async def set_role_handler(message: types.Message):
         stmt = update(User).where(User.id == user.id).values(role=role)
         await session.execute(stmt)
         await session.commit()
-    await message.answer(f"Роль пользователя с telegram_id {target_telegram_id} обновлена на {role}.")
+    await message.answer(f"Роль пользователя {user.full_name} с telegram_id {target_telegram_id} обновлена на {role}.")
 
 @superuser_router.message(Command("broadcast"))
 async def broadcast(message: types.Message):

@@ -11,30 +11,59 @@ from utils.role_decorator import admin_required
 
 admin_router = Router()
 
-# Пример команды для добавления товара
-@admin_router.message(Command("add_product"))
-@admin_required  # Проверка роли: только admin и superuser
-async def add_product_handler(message: types.Message):
-    # Ожидается формат: /add_product имя, цена, описание
-    parts = message.text.split(maxsplit=1)
+
+# =======================
+# Команды для управления пользователями
+# =======================
+@admin_router.message(Command("list_users"))
+@admin_required
+async def list_users_handler(message: types.Message):
+    """Выводит список всех зарегистрированных пользователей."""
+    async with async_session() as session:
+        result = await session.execute(select(User))
+        users = result.scalars().all()
+    if users:
+        text = "Список пользователей:\n"
+        for user in users:
+            text += (
+                f"ID: {user.id}, Telegram ID: {user.telegram_id}, Name: {user.full_name}, Email: {user.email}\n"
+            )
+        await message.answer(text)
+    else:
+        await message.answer("Пользователей пока нет.")
+
+@admin_router.message(Command("user_details"))
+@admin_required
+async def user_details_handler(message: types.Message):
+    """Выводит подробности о пользователе.
+    Ожидается: /user_details <user_id>
+    Пример: /user_details 4 (ID в БД, а не Telegram ID)
+    """
+    parts = message.text.split()
     if len(parts) != 2:
-        await message.answer("Используйте: /add_product имя, цена, описание")
+        await message.answer("Используйте: /user_details <user_id>")
         return
     try:
-        data_parts = [p.strip() for p in parts[1].split(",")]
-        if len(data_parts) < 2:
-            await message.answer("Укажите хотя бы имя и цену.")
-            return
-        data = {
-            "name": data_parts[0],
-            "price": float(data_parts[1]),
-            "description": data_parts[2] if len(data_parts) >= 3 else ""
-        }
+        user_id = int(parts[1])
         async with async_session() as session:
-            product = await orm_add_product(session, data)
-        await message.answer(f"Продукт '{product.name}' добавлен!")
+            result = await session.execute(select(User).where(User.id == user_id))
+            user = result.scalar()
+        if user:
+            text = (
+                f"Детали пользователя:\n"
+                f"ID: {user.id}\n"
+                f"Telegram ID: {user.telegram_id}\n"
+                f"ФИО: {user.full_name}\n"
+                f"Email: {user.email}\n"
+                f"Телефон: {user.phone}\n"
+                f"Email: {user.role.value}\n"  # тк нужно получить значение RoleEnum.USER
+                f"Зарегистрирован: {user.created_at}\n"
+            )
+            await message.answer(text)
+        else:
+            await message.answer("Пользователь не найден.")
     except Exception as e:
-        await message.answer("Ошибка при добавлении продукта.")
+        await message.answer("Ошибка при получении информации о пользователе.")
 
 # Команда для удаления товара (базовый пример)
 @admin_router.message(Command("delete_product"))
@@ -142,53 +171,6 @@ async def update_order_handler(message: types.Message):
         await message.answer(f"Заказ {order_id} обновлен: статус '{new_status}', оплата: {is_paid if is_paid is not None else 'без изменений'}.")
     except Exception as e:
         await message.answer("Ошибка при обновлении заказа.")
-
-@admin_router.message(Command("list_users"))
-@admin_required
-async def list_users_handler(message: types.Message):
-    """Выводит список всех зарегистрированных пользователей."""
-    async with async_session() as session:
-        result = await session.execute(select(User))
-        users = result.scalars().all()
-    if users:
-        text = "Список пользователей:\n"
-        for user in users:
-            text += (
-                f"ID: {user.id}, Telegram ID: {user.telegram_id}, Name: {user.full_name}, Email: {user.email}\n"
-            )
-        await message.answer(text)
-    else:
-        await message.answer("Пользователей пока нет.")
-
-@admin_router.message(Command("user_details"))
-@admin_required
-async def user_details_handler(message: types.Message):
-    """Выводит подробности о пользователе.
-    Ожидается: /user_details <user_id>
-    """
-    parts = message.text.split()
-    if len(parts) != 2:
-        await message.answer("Используйте: /user_details <user_id>")
-        return
-    try:
-        user_id = int(parts[1])
-        async with async_session() as session:
-            result = await session.execute(select(User).where(User.id == user_id))
-            user = result.scalar()
-        if user:
-            text = (
-                f"Детали пользователя:\n"
-                f"ID: {user.id}\n"
-                f"Telegram ID: {user.telegram_id}\n"
-                f"Name: {user.full_name}\n"
-                f"Email: {user.email}\n"
-                f"Created At: {user.created_at}\n"
-            )
-            await message.answer(text)
-        else:
-            await message.answer("Пользователь не найден.")
-    except Exception as e:
-        await message.answer("Ошибка при получении информации о пользователе.")
 
 
 @admin_router.message(Command("popular_products"))

@@ -2,6 +2,7 @@ from aiogram import Router, types
 from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery
 from sqlalchemy.ext.asyncio import AsyncSession
+from handlers.menu_handlers import show_main_menu
 from database.orm_requests import (
     orm_get_all_products,
     orm_get_user_by_telegram,
@@ -10,25 +11,27 @@ from database.orm_requests import (
 )
 from database.db import async_session
 from database.models import Order
-from keyboards.main_menu import main_menu
+from keyboards.main_menu import get_main_menu
+from utils.user_check import is_admin, is_registered
 
 
 
 user_router = Router()
 
 @user_router.message(Command("start"))
-async def start_handler(message: Message):
-    await message.answer(
-        "Добро пожаловать в магазин!\nВыберите интересующий вас раздел:",
-        reply_markup=main_menu
-    )
+async def start_handler(message: Message, session: AsyncSession):
+    # user_id = message.from_user.id
+    # admin_status = await is_admin(session, user_id)  # Проверяем, является ли пользователь администратором
+    # #registered_status = await is_registered(session, user_id)  # Проверяем, зарегистрирован ли пользователь
+    # await message.answer(
+    #     "Добро пожаловать в магазин!\nВыберите интересующий вас раздел:",
+    #     reply_markup=get_main_menu(
+    #         is_admin=admin_status,
+    #         )
+    # )
+    await message.answer("Добро пожаловать в магазин!")
+    await show_main_menu(message, session)
 
-@user_router.message(Command("menu"))
-async def menu_handler(message: Message):
-    await message.answer(
-        "Главное меню.",
-        reply_markup=main_menu  # Отправляем клавиатуру с главным меню
-    )
 
 @user_router.message(lambda message: message.text == "🏬 Каталог")   # 📦
 async def catalog_handler(message: Message, session: AsyncSession):

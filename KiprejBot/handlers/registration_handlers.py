@@ -1,17 +1,18 @@
 import re
-from aiogram import Router, types
+from aiogram import Router, types, F
 from aiogram.filters import Command
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery
 from sqlalchemy import update, delete
+from utils.navigation import go_to_main_menu
 from database.orm_requests import orm_delete_user, orm_register_user, orm_get_user_by_telegram, orm_update_user_profile
 from database.db import async_session
 from database.models import User
 from sqlalchemy.ext.asyncio import AsyncSession
 from keyboards.user_keyboards import profile_menu
-from keyboards.main_menu import main_menu
-from utils.user_check import user_check
+from keyboards.main_menu import get_main_menu
+from utils.user_check import is_admin, is_registered, user_check
 
 
 
@@ -155,7 +156,8 @@ async def my_profile_handler(message: Message, session: AsyncSession):
             f"Имя: {user.full_name}\n"
             f"Email: {user.email or 'не указан'}\n"
             f"Телефон: {getattr(user, 'phone', 'не указан')}\n"
-            f"Дата регистрации: {user.created_at.strftime('%d.%m.%Y') if user.created_at else 'не указано'}"
+            f"Дата регистрации: {user.created_at.strftime('%d.%m.%Y') if user.created_at else 'не указано'}\n"
+            f"TelegramID: {telegram_id}\n"
         )
         await message.answer(text)
     else:
@@ -298,6 +300,6 @@ async def delete_profile_confirm(message: Message, state: FSMContext, session: A
     await state.clear()
 
 
-@registration_router.message(lambda message: message.text == "🔙 Назад в главное меню")
-async def back_to_main_menu(message: Message):
-    await message.answer("Вы вернулись в главное меню.", reply_markup=main_menu)
+@registration_router.message(F.text == "🔙 Назад в главное меню")
+async def back_to_main_menu(message: Message, session: AsyncSession):
+    await go_to_main_menu(message, session)

@@ -14,7 +14,9 @@ from handlers.superuser_handlers import superuser_router
 from notifications.notifications import send_notifications
 from handlers.review_handlers import review_router
 from handlers.registration_handlers import registration_router
-from handlers.admin_product_handler import admin_router_product_management
+from handlers.admin_product_handler import admin_router_product_handler
+from handlers.menu_handlers import menu_router
+from handlers.admin_category_handlers import admin_category_router
 from pathlib import Path
 
 
@@ -49,7 +51,8 @@ scheduler.add_job(scheduled_job, CronTrigger(hour=12, minute=0, timezone="Europe
 # Устанавливаем команду "/menu" в кнопке с тремя полосками
 async def set_commands(bot: Bot):
     commands = [
-        BotCommand(command='menu', description='Открыть главное меню')
+        BotCommand(command='menu', description='Открыть главное меню'),
+        BotCommand(command='admin_menu', description='Открыть меню администратора')  # Добавили команду для админов
     ]
     await bot.set_my_commands(commands)
 
@@ -64,12 +67,15 @@ async def main():
     #dp.update.middleware(SchedulerMiddleware(scheduler))
 
     # Регистрируем роутеры
+    dp.include_router(menu_router)  # Новый роутер для /menu и /product_menu
     dp.include_router(user_router)
+    dp.include_router(admin_category_router)
     dp.include_router(admin_router)
     dp.include_router(superuser_router)
     dp.include_router(review_router)
     dp.include_router(registration_router)
-    dp.include_router(admin_router_product_management)
+    dp.include_router(admin_router_product_handler)
+
 
     # Запускаем планировщик
     scheduler.start()
