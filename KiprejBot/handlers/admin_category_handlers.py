@@ -16,7 +16,7 @@ from database.orm_requests import (
     orm_get_category_by_id,
     orm_update_category,
     orm_delete_category,
-    category_has_products
+    orm_category_has_products
 )
 
 
@@ -149,7 +149,7 @@ async def delete_category_confirm(message: Message, state: FSMContext, session: 
         return
 
     # проверка, есть ли товары в этой категории
-    if await category_has_products(session, category_id):
+    if await orm_category_has_products(session, category_id):
         await message.answer(f"⚠️ У категории есть связанные товары."
                              f"Удалите или перенесите их перед удалением категории.")
         return

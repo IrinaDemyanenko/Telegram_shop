@@ -33,16 +33,16 @@ async def start_handler(message: Message, session: AsyncSession):
     await show_main_menu(message, session)
 
 
-@user_router.message(lambda message: message.text == "🏬 Каталог")   # 📦
-async def catalog_handler(message: Message, session: AsyncSession):
-    products = await orm_get_all_products(session)
-    if products:
-        text = "Наши товары:\n"
-        for prod in products:
-            text += f"{prod.id}. {prod.name} — {prod.price} руб.\n"
-        await message.answer(text)
-    else:
-        await message.answer("Магазин пока пустой.")
+# @user_router.message(lambda message: message.text == "🏬 Каталог")   # 📦
+# async def catalog_handler(message: Message, session: AsyncSession):
+#     products = await orm_get_all_products(session)
+#     if products:
+#         text = "Наши товары:\n"
+#         for prod in products:
+#             text += f"{prod.id}. {prod.name} — {prod.price} руб.\n"
+#         await message.answer(text)
+#     else:
+#         await message.answer("Магазин пока пустой.")
 
 
 # Команда для просмотра истории заказов

@@ -1,8 +1,12 @@
+from typing import Optional
 import aiofiles, hashlib
+from uuid import uuid4
 from sqlalchemy import select, update, delete
 from sqlalchemy.ext.asyncio import AsyncSession
-from database.models import Category, Review, User, Product, ProductImage, Cart, CartItem, Order, Address
+from database.models import Category, Review, User, Product, ProductImage, Cart, CartItem, Order, Address, ProductVariant
 from pathlib import Path
+from config import UPLOAD_DIR
+from sqlalchemy.orm import selectinload
 
 # === Работа с пользователями ===
 async def orm_register_user(session: AsyncSession, data: dict) -> None:
@@ -52,19 +56,61 @@ async def orm_get_user_role(session: AsyncSession, telegram_id: int) -> str:
     return role if role else "user"  # Если роли нет, считаем, что это обычный пользователь
 
 # === Работа с категориями ===
+# Базовый запрос со связями
+def get_base_product_query():
+    """Все товары со своими изображениями и со своими вариантами, отсортированные по id."""
+    return select(Product).options(
+        selectinload(Product.images),
+        selectinload(Product.variants)
+    ).order_by(Product.id)
+
+
+# Фильтрация по категории
+def apply_category_filter(query, category_id: Optional[int]):
+    """Применить к любому запросу фильтр по категории товара."""
+    if category_id is not None:
+        query = query.where(Product.category_id == category_id)
+    return query
+
+
+# Фильтрация по размеру (наличие нужного варианта)
+def apply_size_filter(query, size: Optional[str]):
+    """Применить к запросу фильтр по размеру товара."""
+    if size:
+        query = query.where(
+            exists().where(
+                (ProductVariant.product_id == Product.id) &
+                (ProductVariant.size == size)
+            )
+        )
+    return query
+
 async def orm_get_category_by_name(session: AsyncSession, category_name: str):
     """Возвращает категорию по её названию."""
     query = select(Category).where(Category.name == category_name)
     result = await session.execute(query)
     return result.scalar()
 
-async def orm_get_all_categories(session: AsyncSession):
-    """Возвращает список всех категорий."""
-    query = select(Category)
+async def orm_get_all_categories(session: AsyncSession) -> list[Category]:
+    """Возвращает список всех категорий товаров."""
+    query = select(Category).order_by(Category.name)
     result = await session.execute(query)
     return result.scalars().all()
 
-# === Работа с товарами ===
+async def orm_get_filtered_products(
+    session: AsyncSession,
+    category_id: Optional[int] = None,
+    size: Optional[str] = None
+) -> list[Product]:
+    """Список товаров, отфильтрованных по категории и размеру."""
+    query = get_base_product_query()
+    query = apply_category_filter(query, category_id)
+    query = apply_size_filter(query, size)
+
+    result = await session.execute(query)
+    return result.scalars().all()
+
+# === Работа с товарами и с вариантами ===
 async def orm_add_product(session: AsyncSession, data: dict) -> Product:
     """Добавляет новый товар."""
     product = Product(
@@ -77,40 +123,139 @@ async def orm_add_product(session: AsyncSession, data: dict) -> Product:
     return product
 
 async def orm_get_all_products(session: AsyncSession):
-    query = select(Product)
+    """Возвращает все товары с предзагруженными категориями и вариантами,
+    отсортированные по ID.
+    """
+    query = select(Product).options(
+        selectinload(Product.category),
+        selectinload(Product.variants)
+    ).order_by(Product.id)
     result = await session.execute(query)
     return result.scalars().all()
 
 async def orm_get_product_by_id(session: AsyncSession, product_id: int):
-    query = select(Product).where(Product.id == product_id)
-    return await session.scalar(query)
+    """Возвращает товар по id."""
+    query = (
+        select(Product)
+        .options(selectinload(Product.variants), selectinload(Product.images), selectinload(Product.category))
+        .where(Product.id == product_id)
+    )
+    result = await session.execute(query)
+    return result.scalars().first()
 
+async def orm_get_all_products_with_variants(session):
+    """Получаем все товары с категориями и вариантами.
+    SQLAlchemy сделает:
+    Один запрос, чтобы получить все продукты.
+    Второй запрос, чтобы получить все варианты для этих продуктов.
+    И сам «свяжет» их в Python.
+    selectinload - выборочная загрузка.
+    """
+    query = select(Product).options(
+        selectinload(Product.variants),
+        selectinload(Product.category),
+    )
+    result = await session.execute(query)
+    return result.scalars().all()
+
+async def orm_delete_product_images(session, product_id):
+    """Удаляет связанные с товаром изображения, принимает id товара."""
+    query = delete(ProductImage).where(ProductImage.product_id == product_id)
+    await session.execute(query)
+    await session.commit()
+
+async def orm_delete_product_variants(session, product_id):
+    """Удаляет связанные с товаром варианты, принимает id товара."""
+    query = delete(ProductVariant).where(ProductVariant.product_id == product_id)
+    await session.execute(query)
+    await session.commit()
+
+async def orm_delete_product(session, product_id):
+    """Удаляет товар, принимает id товара."""
+    query = delete(Product).where(Product.id == product_id)
+    await session.execute(query)
+    await session.commit()
+
+async def orm_get_available_sizes(session: AsyncSession, category_id: int) -> list[str]:
+    """Получает список доступных размеров одежды в выбраной категории товаров."""
+    query = (
+        select(ProductVariant.size)
+        .distinct()
+        .join(Product)
+        .where(ProductVariant.stock > 0)
+    )
+    if category_id is not None:
+        query = query.where(Product.category_id == category_id)
+
+    result = await session.execute(query)
+    return [row[0] for row in result.all() if row[0]]
+
+async def orm_get_available_sizes_for_product(product_id: int, session: AsyncSession):
+    """Получает список всех доступныч размеров для конкретного
+    товара, из таблицы вариантов товара, без дублей.
+    """
+    query = select(ProductVariant.size).where(ProductVariant.product_id == product_id).distinct()
+    result = await session.execute(query)
+    sizes = [row[0] for row in result.all() if row[0]]
+    return sizes
+
+async def orm_get_product_with_images(product_id: int, session: AsyncSession):
+    """Получает товар со всеми изображениями (списком адресов изображений).
+    product_id: int - id товара
+    session: AsyncSession - подключение к БД
+    """
+    query = select(Product).where(Product.id == product_id).options(selectinload(Product.images))
+    result = await session.execute(query)
+    product = result.scalar_one_or_none()
+
+    if not product:
+        return None, []
+    return product, product.images
+
+async def orm_get_product_variant_by_size(
+        session: AsyncSession, product_id: int, size: str
+) -> Optional[ProductVariant]:
+    """Возвращает вариант товара по id товара и выбранному размеру.
+
+    session: Асинхронная сессия SQLAlchemy.
+    product_id: Идентификатор товара.
+    size: Выбранный размер.
+    return: Объект ProductVariant или None, если вариант не найден.
+    """
+    query = select(ProductVariant).where(
+        ProductVariant.product_id == product_id,
+        ProductVariant.size == size
+        )
+    result = await session.execute(query)
+    variant = result.scalar()  # возвращает первую колонку в первом ряду
+    return variant
 
 # === Работа с изображениями товаров ===
-UPLOAD_DIR = Path("static/uploads/products")
 
-async def save_product_image(file, product_id: int, db: AsyncSession) -> str:
+async def orm_save_product_image(file, product_id: int, db: AsyncSession, bot=None) -> str:
     """Асинхронно сохраняет изображение в файловой системе и записывает путь в БД
 
-    file: объект файла, загруженный пользователем;
+    file: объект файла, загруженный пользователем через bot.get_file();
     product_id: ID товара, которому принадлежит изображение;
     db: сессия БД (AsyncSession), через которую мы будем записывать данные;
-    Возвращает:
-    str: строку с путём сохранённого файла.
+    bot: экземпляр бота для скачивания файла
+    Возвращает путь к сохранённому файлу (str), либо None при ошибке.
     """
+    if bot is None:
+        raise ValueError("Bot instance must be provided for saving the image.")
+
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)  # Создаём папку, если её нет
 
-    file_ext = file.filename.split(".")[:1]  # получаем расширение файла (jpg, png и т. д.)
-    hashed_filename = hashlib.md5(file.filename.encode()).hexdigest()  # Генерируем уникальное имя
-    filename = f"{product_id}_{hashed_filename}.{file_ext}"
-    file_path = UPLOAD_DIR / filename  # Полный путь к изображению
+    # Получаем расширение файла
+    file_ext = file.file_path.split(".")[-1]  # jpg, png и т.д.
+    filename = f"{product_id}_{uuid4().hex}.{file_ext}"  # например '42_3fa85f6457174562b3fc2c963f66afa6.jpg'
+    file_path = UPLOAD_DIR / filename
 
-    # Сохраняем файл на сервер
     try:
-        async with aiofiles.open(file_path, "wb") as buffer:
-            await buffer.write(await file.read())  # Асинхронно записываем файл
+        # Скачиваем файл с серверов Telegram
+        await bot.download_file(file.file_path, destination=file_path)
 
-        # Записываем в БД
+        # Сохраняем запись в БД
         new_image = ProductImage(product_id=product_id, image_url=str(file_path))
         db.add(new_image)
         await db.commit()
@@ -121,16 +266,21 @@ async def save_product_image(file, product_id: int, db: AsyncSession) -> str:
         print(f"Ошибка сохранения файла: {e}")
         return None
 
+    # Улучшила функцию: save_product_image(file_id, ..., bot) — теперь она сама умеет:
+    # получить файл по file_id;
+    # узнать путь на серверах Telegram;
+    # и сама скачать файл по file_path
+
 
 # === Работа с категориями ===
-async def category_has_products(session: AsyncSession, category_id: int) -> bool:
+async def orm_category_has_products(session: AsyncSession, category_id: int) -> bool:
     """Проверяет, есть ли у категории привязанные товары."""
     result = await session.execute(
         select(Product).where(Product.category_id == category_id)
     )
     return result.scalars().first() is not None
 
-async def orm_get_all_categories(session: AsyncSession):
+async def orm_orm_get_all_categories(session: AsyncSession):
     result = await session.execute(select(Category))
     return result.scalars().all()
 
@@ -184,7 +334,12 @@ async def orm_get_or_create_cart(session: AsyncSession, user: User):
         await session.commit()
     return cart
 
-async def orm_add_item_to_cart(session: AsyncSession, cart: Cart, product_id: int, quantity: int = 1) -> None:
+async def orm_add_item_to_cart(
+        session: AsyncSession,
+        cart: Cart,
+        product_id: int,
+        quantity: int = 1
+) -> None:
     query = select(CartItem).where(CartItem.cart_id == cart.id, CartItem.product_id == product_id)
     item = await session.scalar(query)
     if item:
@@ -199,10 +354,86 @@ async def orm_get_cart_items(session: AsyncSession, cart: Cart):
     result = await session.execute(query)
     return result.scalars().all()
 
+async def orm_get_cart_item(
+        session: AsyncSession,
+        cart_id: int,
+        product_id: int,
+        variant_id: int
+) -> Optional[CartItem]:
+    """Возвращает товар из корзины по id корзины, id товара и id варианта.
+
+    session: Асинхронная сессия SQLAlchemy.
+    cart_id: Идентификатор корзины.
+    product_id: Идентификатор товара.
+    variant_id: Идентификатор варианта товара.
+    return: Объект CartItem или None, если элемент не найден.
+    """
+    query = select(CartItem).where(
+        CartItem.cart_id == cart_id,
+        CartItem.product_id == product_id,
+        CartItem.variant_id == variant_id
+    )
+    result = session.execute(query)
+    return result.scalar()
+
 async def orm_remove_item_from_cart(session: AsyncSession, cart_item_id: int) -> None:
     stmt = delete(CartItem).where(CartItem.id == cart_item_id)
     await session.execute(stmt)
     await session.commit()
+
+async def orm_add_product_to_cart(
+    user_id: int,
+    product_id: int,
+    size: str,
+    quantity: int,
+    session: AsyncSession
+) -> None:
+    """
+    Добавляет товар с выбранным размером в корзину пользователя.
+
+    1. Получает пользователя по telegram_id (user_id).
+    2. Получает или создаёт корзину для этого пользователя.
+    3. Получает товар и вариант (по размеру) для выбранного товара.
+    4. Если элемент уже есть в корзине – увеличивает количество,
+       иначе – создаёт новый элемент корзины с ценой на момент добавления.
+    """
+    # 1. Получаем пользователя
+    user = await orm_get_user_by_telegram(session, user_id)
+    if not user:
+        raise ValueError(f'Пользователь с telegram_id {user_id} не найден.')
+
+     # 2. Получаем или создаём корзину для пользователя
+    cart = await orm_get_or_create_cart(session, user)
+
+    # 3. Получаем товар по id
+    product = await orm_get_product_by_id(session, product_id)
+    if not product:
+        raise ValueError(f'Товар с id {product_id} не найден.')
+
+    # 4. Получаем вариант товара с нужным размером
+    variant = await orm_get_product_variant_by_size(session, product.id, size)
+    if not variant:
+        raise ValueError(f'Вариант товара с размером {size} для товара {product.name} не найден.')
+
+    # 5.Рассчитываем цену на момент добавления
+    price_at_time = variant.get_final_price()
+
+    # 6. Проверяем, есть ли уже элемент корзины с этим товаром и вариантом,
+    # если есть, увеличиваем колличество на quantity, если нет создаём новый CartItem
+    cart_item = await orm_get_cart_item(session, cart.id, product.id, variant.id)
+    if cart_item:
+        cart_item.quantity += quantity
+    else:
+        new_item = CartItem(
+            cart_id=cart.id,
+            product_id=product.id,
+            variant_id=variant.id,
+            quantity=quantity,
+            price_at_time=price_at_time
+        )
+        session.add(new_item)
+    await session.commit()
+
 
 # === Работа с заказами ===
 async def orm_create_order(session: AsyncSession, user: User, total_amount: float) -> Order:

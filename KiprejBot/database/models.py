@@ -99,7 +99,13 @@ class ProductVariant(Base):
     product = relationship("Product", back_populates="variants")
 
     def get_final_price(self) -> float:
-        """Рассчитывает конечную цену варианта с учётом наценки и скидки"""
+        """Рассчитывает конечную цену варианта с учётом наценки и скидки.
+
+        Возвращает итоговую цену варианта товара:
+        - Базовая цена берётся из товара
+        - Плюс наценка за размер/цвет (additional_price)
+        - Минус скидка (discount_percent)
+        """
         base_price = self.product.price + self.additional_price  # Основная цена + наценка
 
         if self.discount_percent > 0:
@@ -108,6 +114,17 @@ class ProductVariant(Base):
             final_price = base_price
 
         return round(final_price, 2)  # Округляем цену до 2 знаков после запятой
+
+    def old_price(self):
+        """Возвращает "старую цену" (базовая цена + наценка за вариант)
+        до применения скидки, если скидка есть. Чтобы подчеркнуть выгоду покупки.
+        Используется для зачёркнутого текста в карточке товара.
+        """
+        if self.discount_percent > 0:
+            return round(self.product.price + self.additional_price, 2)
+        return None
+
+
 
 # -----------------------------
 # Корзина и элементы корзины
@@ -132,7 +149,7 @@ class CartItem(Base):
 
     cart = relationship("Cart", back_populates="items")
     product = relationship("Product")
-    variant = relationship("ProductVariant")
+    variant = relationship("ProductVariant")  # связать элемент корзины с конкретным вариантом товара
 
 # -----------------------------
 # Адрес доставки пользователя

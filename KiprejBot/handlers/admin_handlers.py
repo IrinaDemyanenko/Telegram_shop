@@ -1,3 +1,5 @@
+
+import pandas as pd
 from aiogram import Router, types
 from aiogram.filters import Command
 from sqlalchemy import select, update
@@ -7,6 +9,10 @@ from database.models import Order, User, Product
 from database.db import async_session
 from database.orm_requests import orm_add_product
 from utils.role_decorator import admin_required
+from aiogram.types import FSInputFile
+from database.orm_requests import orm_get_all_products_with_variants
+from aiogram.types import Message
+
 
 
 admin_router = Router()
@@ -88,6 +94,62 @@ async def delete_product_handler(message: types.Message):
     except Exception as e:
         await message.answer("Ошибка при удалении продукта.")
 
+
+# =======================
+# Дополнительные команды: для выгрузки всех товаров из БД в Excel
+# =======================
+@admin_router.message(Command("all_products"))
+@admin_required
+async def list_all_products(message: Message, session: AsyncSession):
+    """Команда позволяет выгрузить информацию о всех товаров из БД,
+    в ответ на команду бот сформирует и отправит Excel file.
+    Здесь товары сгруппированы по категориям, со всеми вариантами.
+    """
+    products = await orm_get_all_products_with_variants(session)
+
+    if not products:
+        await message.answer("❌ Нет товаров в базе данных.")
+        return
+
+    data = []
+    for product in products:
+        base_info = {
+            "ID товара": product.id,
+            "Категория": product.category.name if product.category else "—",
+            "Название": product.name,
+            "Описание": product.description or "—",
+            "Бренд": product.brand or "—",
+            "Базовая цена": product.price
+        }
+
+        if product.variants:
+            for variant in product.variants:
+                final_price = (
+                    product.price + variant.additional_price
+                ) * (1 - variant.discount_percent / 100)
+
+                data.append({
+                    **base_info,
+                    "Размер": variant.size,
+                    "Цвет": variant.color,
+                    "Наценка": variant.additional_price,
+                    "Скидка": f"{variant.discount_percent}%",
+                    "Итоговая цена": round(final_price, 2),
+                    "Остаток на складе": variant.stock
+                })
+        else:
+            data.append({**base_info})
+
+    df = pd.DataFrame(data)
+
+    # Сохраняем в файл Excel
+    file_path = "products_with_variants.xlsx"
+    df.to_excel(file_path, index=False)
+
+    await message.answer_document(
+        FSInputFile(file_path),
+        caption="📦 Все товары с вариантами по категориям:"
+        )
 # =======================
 # Дополнительные команды для управления заказами и пользователями
 # =======================

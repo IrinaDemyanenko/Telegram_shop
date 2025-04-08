@@ -17,12 +17,11 @@ from handlers.registration_handlers import registration_router
 from handlers.admin_product_handler import admin_router_product_handler
 from handlers.menu_handlers import menu_router
 from handlers.admin_category_handlers import admin_category_router
-from pathlib import Path
+from config import UPLOAD_DIR
+from utils.cancel_command import cancel_router
+from handlers.catalog_handlers import catalog_router
+from handlers.product_card_handlers import product_card_router
 
-
-# Автоматическое создание папки для изображений
-UPLOAD_DIR = Path("static/uploads/products")
-UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 print(f"📂 Директория для загрузки изображений: {UPLOAD_DIR.resolve()}")
 
@@ -75,6 +74,9 @@ async def main():
     dp.include_router(review_router)
     dp.include_router(registration_router)
     dp.include_router(admin_router_product_handler)
+    dp.include_router(cancel_router)
+    dp.include_router(catalog_router)
+    dp.include_router(product_card_router)
 
 
     # Запускаем планировщик
